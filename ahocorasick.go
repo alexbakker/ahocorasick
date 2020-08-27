@@ -23,9 +23,6 @@ type node struct {
 	// be output when matching
 	index int // index into original dictionary if output is true
 
-	counter int // Set to the value of the Matcher.counter when a
-	// match is output to prevent duplicate output
-
 	// The use of fixed size arrays is space-inefficient but fast for
 	// lookups.
 
@@ -46,12 +43,19 @@ type node struct {
 	// because it is used to fallback in the trie when a match fails.
 }
 
+// Hit describes a match.
+type Hit struct {
+	// The index in the original dict of the keyword that was found.
+	Index int
+	// The start index in the text where the keyword was found.
+	TextIndex int
+}
+
 // Matcher is returned by NewMatcher and contains a list of blices to
 // match against
 type Matcher struct {
-	counter int // Counts the number of matches done, and is used to
-	// prevent output of multiple matches of the same string
-	trie []node // preallocated block of memory containing all the
+	dictionary [][]byte
+	trie       []node // preallocated block of memory containing all the
 	// nodes
 	extent int   // offset into trie that is currently free
 	root   *node // Points to trie[0]
@@ -87,7 +91,7 @@ func (m *Matcher) getFreeNode() *node {
 // buildTrie builds the fundamental trie structure from a set of
 // blices.
 func (m *Matcher) buildTrie(dictionary [][]byte) {
-
+	m.dictionary = dictionary
 	// Work out the maximum size for the trie (all dictionary entries
 	// are distinct plus the root). This is used to preallocate memory
 	// for it.
@@ -215,13 +219,12 @@ func NewStringMatcher(dictionary []string) *Matcher {
 
 // Match searches in for blices and returns all the blices found as
 // indexes into the original dictionary
-func (m *Matcher) Match(in []byte) []int {
-	m.counter += 1
-	var hits []int
+func (m *Matcher) Match(in []byte) []Hit {
+	var hits []Hit
 
 	n := m.root
 
-	for _, b := range in {
+	for i, b := range in {
 		c := int(b)
 
 		if !n.root && n.child[c] == nil {
@@ -232,24 +235,15 @@ func (m *Matcher) Match(in []byte) []int {
 			f := n.child[c]
 			n = f
 
-			if f.output && f.counter != m.counter {
-				hits = append(hits, f.index)
-				f.counter = m.counter
+			if f.output {
+				hit := Hit{Index: f.index, TextIndex: i - len(m.dictionary[f.index]) + 1}
+				hits = append(hits, hit)
 			}
 
 			for !f.suffix.root {
 				f = f.suffix
-				if f.counter != m.counter {
-					hits = append(hits, f.index)
-					f.counter = m.counter
-				} else {
-
-					// There's no point working our way up the
-					// suffixes if it's been done before for this call
-					// to Match. The matches are already in hits.
-
-					break
-				}
+				hit := Hit{Index: f.index, TextIndex: i - len(m.dictionary[f.index]) + 1}
+				hits = append(hits, hit)
 			}
 		}
 	}
